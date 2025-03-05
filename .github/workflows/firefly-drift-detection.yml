@@ -19,6 +19,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Ensure Terraform Directory Exists
+        run: mkdir -p terraform
+
       - name: Install Terraform
         run: |
           curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
@@ -58,7 +61,7 @@ jobs:
         working-directory: terraform
 
       - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v3.1.2
         with:
           name: terraform-plan
           path: terraform/tfplan
@@ -81,7 +84,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Download Terraform Plan
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v3.1.2
         with:
           name: terraform-plan
           path: terraform
@@ -120,7 +123,7 @@ jobs:
 
       - name: Upload Drift Report
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v3.1.2
         with:
           name: drift-report
           path: terraform/drift_report.json
@@ -132,5 +135,5 @@ jobs:
             echo "⚠️ Drift detected! Pausing workflow for manual approval."
             exit 1
           else
-            echo "✅ No drift detected. Good"
+            echo "✅ No drift detected."
           fi

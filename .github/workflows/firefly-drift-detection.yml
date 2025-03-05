@@ -32,6 +32,17 @@ jobs:
 
       - name: Initialize Terraform
         run: terraform init
+        working-directory: terraform
+
+      - name: Plan Terraform Changes
+        id: plan
+        run: terraform plan -out=tfplan
+        working-directory: terraform
+
+      - name: Apply Terraform Changes
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
+        working-directory: terraform
 
       - name: Install Driftctl
         run: |
@@ -43,20 +54,21 @@ jobs:
         id: drift
         run: |
           driftctl scan --from tfstate+s3://firefly-drift-detection-bucket/terraform.tfstate --to aws+tf --output json > drift_report.json || true
+        working-directory: terraform
 
-      - name: Upload Drift Report Artifact
+      - name: Upload Drift Report
         if: always()
         uses: actions/upload-artifact@v3
         with:
           name: drift-report
-          path: drift_report.json
+          path: terraform/drift_report.json
 
-      - name: Fail on Drift
+      - name: Pause Execution on Drift
         if: steps.drift.outcome == 'success'
         run: |
-          if grep -q '"summary":.*"total_changes":[^0]' drift_report.json; then
-            echo "Drift detected! Failing the workflow."
+          if grep -q '"summary":.*"total_changes":[^0]' terraform/drift_report.json; then
+            echo "⚠️ Drift detected! Pausing workflow for manual approval."
             exit 1
           else
-            echo "No drift detected."
+            echo "✅ No drift detected."
           fi

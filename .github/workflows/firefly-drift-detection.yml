@@ -1,0 +1,62 @@
+name: "Firefly - Continuous Drift Detection"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  drift-detection:
+    name: "Detect Infrastructure Drift"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      - name: Install Driftctl
+        run: |
+          curl -L https://github.com/snyk/driftctl/releases/latest/download/driftctl_linux_amd64 -o driftctl
+          chmod +x driftctl
+          sudo mv driftctl /usr/local/bin/
+
+      - name: Run Drift Detection
+        id: drift
+        run: |
+          driftctl scan --from tfstate+s3://firefly-drift-detection-bucket/terraform.tfstate --to aws+tf --output json > drift_report.json || true
+
+      - name: Upload Drift Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: drift-report
+          path: drift_report.json
+
+      - name: Fail on Drift
+        if: steps.drift.outcome == 'success'
+        run: |
+          if grep -q '"summary":.*"total_changes":[^0]' drift_report.json; then
+            echo "Drift detected! Failing the workflow."
+            exit 1
+          else
+            echo "No drift detected."
+          fi

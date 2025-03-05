@@ -1,4 +1,4 @@
-name: "Firefly - Continuous Drift Detection"
+name: "Firefly - Drift Detection CI"
 
 on:
   push:
@@ -10,9 +10,8 @@ permissions:
   contents: read
 
 jobs:
-
-  init:
-    name: "Initialize Terraform"
+  drift-detection:
+    name: "Terraform & Drift Detection"
     runs-on: ubuntu-latest
 
     steps:
@@ -40,74 +39,14 @@ jobs:
         run: terraform init
         working-directory: terraform
 
-  plan:
-    name: "Terraform Plan"
-    runs-on: ubuntu-latest
-    needs: init
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
       - name: Plan Terraform Changes
         run: terraform plan -out=tfplan
         working-directory: terraform
 
-      - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v3.1.2
-        with:
-          name: terraform-plan
-          path: terraform/tfplan
-
-  apply:
-    name: "Terraform Apply"
-    runs-on: ubuntu-latest
-    needs: plan
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v3.1.2
-        with:
-          name: terraform-plan
-          path: terraform
-
       - name: Apply Terraform Changes
-        run: terraform apply -auto-approve terraform/tfplan
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
         working-directory: terraform
-
-  drift:
-    name: "Detect Infrastructure Drift"
-    runs-on: ubuntu-latest
-    needs: apply
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
 
       - name: Install Driftctl
         run: |
@@ -123,16 +62,16 @@ jobs:
 
       - name: Upload Drift Report
         if: always()
-        uses: actions/upload-artifact@v3.1.2
+        uses: actions/upload-artifact@v3
         with:
           name: drift-report
           path: terraform/drift_report.json
 
-      - name: Pause Execution on Drift
+      - name: Fail on Drift
         if: steps.drift.outcome == 'success'
         run: |
           if grep -q '"summary":.*"total_changes":[^0]' terraform/drift_report.json; then
-            echo "⚠️ Drift detected! Pausing workflow for manual approval."
+            echo "⚠️ Drift detected! Stopping execution."
             exit 1
           else
             echo "✅ No drift detected."

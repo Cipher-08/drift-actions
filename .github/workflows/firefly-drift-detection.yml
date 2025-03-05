@@ -12,11 +12,16 @@ permissions:
 jobs:
   drift-detection:
     name: "Terraform & Drift Detection"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Use stable Ubuntu version
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Debug Available GitHub Actions
+        run: |
+          echo "Checking installed actions..."
+          ls -la /home/runner/work/_actions/
 
       - name: Ensure Terraform Directory Exists
         run: mkdir -p terraform
@@ -62,10 +67,14 @@ jobs:
 
       - name: Upload Drift Report
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v3.1.2
         with:
           name: drift-report
           path: terraform/drift_report.json
+
+      # 🔹 Fallback: Remove this if `upload-artifact` still fails
+      # - name: Skip Uploading Drift Report (Temporary Fix)
+      #   run: echo "Skipping artifact upload due to known issue"
 
       - name: Fail on Drift
         if: steps.drift.outcome == 'success'

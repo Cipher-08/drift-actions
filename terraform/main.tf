@@ -7,7 +7,7 @@ resource "aws_s3_bucket" "firefly_9834983bucket-49340893894" {
 }
 
 resource "aws_s3_bucket_versioning" "versioning" {
-  bucket = aws_s3_bucket.firefly_bucket.id
+  bucket = aws_s3_bucket.firefly_9834983bucket-49340893894.id
   versioning_configuration {
     status = "Enabled"
   }

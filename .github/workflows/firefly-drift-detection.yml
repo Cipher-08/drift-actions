@@ -12,7 +12,7 @@ permissions:
 jobs:
   drift-detection:
     name: "Terraform & Drift Detection"
-    runs-on: ubuntu-latest  # Use the latest stable runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
@@ -39,15 +39,6 @@ jobs:
         run: terraform init
         working-directory: terraform
 
-      - name: Plan Terraform Changes
-        run: terraform plan -out=tfplan
-        working-directory: terraform
-
-      - name: Apply Terraform Changes
-        if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve tfplan
-        working-directory: terraform
-
       - name: Install Driftctl
         run: |
           curl -L https://github.com/snyk/driftctl/releases/latest/download/driftctl_linux_amd64 -o driftctl
@@ -62,12 +53,12 @@ jobs:
 
       - name: Upload Drift Report
         if: always()
-        uses: actions/upload-artifact@v4  # ✅ Fixed version
+        uses: actions/upload-artifact@v4
         with:
           name: drift-report
           path: terraform/drift_report.json
 
-      - name: Fail on Drift
+      - name: Fail on Drift (Pause Before Applying Fixes)
         if: steps.drift.outcome == 'success'
         run: |
           if grep -q '"summary":.*"total_changes":[^0]' terraform/drift_report.json; then
@@ -76,3 +67,13 @@ jobs:
           else
             echo "✅ No drift detected."
           fi
+
+      - name: Plan Terraform Changes (If Drift Exists)
+        if: steps.drift.outcome == 'failure'  # Only run if previous step failed
+        run: terraform plan -out=tfplan
+        working-directory: terraform
+
+      - name: Apply Terraform Changes (Only If Needed)
+        if: steps.drift.outcome == 'failure'  # Only run if drift was detected
+        run: terraform apply -auto-approve tfplan
+        working-directory: terraform

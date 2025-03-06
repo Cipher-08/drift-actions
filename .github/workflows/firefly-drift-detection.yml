@@ -1,79 +1,157 @@
-name: "Firefly - Drift Detection CI"
+name: 'Terraform Configuration Drift Detection - AWS'
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_dispatch: 
+  schedule:
+    - cron: '41 3 * * *' # Runs nightly at 3:41 AM
 
+# Permissions required for GitHub OIDC authentication (if used in future)
 permissions:
+  id-token: write
   contents: read
+  issues: write
+
+# AWS credentials from GitHub secrets
+env:
+  AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}"
+  AWS_SECRET_ACCESS_KEY: "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+  AWS_DEFAULT_REGION: "us-east-1"  # Change this to your AWS region
 
 jobs:
-  drift-detection:
-    name: "Terraform & Drift Detection"
+  terraform-plan:
+    name: 'Terraform Plan'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform # Ensuring all Terraform commands execute inside the terraform folder
+    outputs:
+      tfplanExitCode: ${{ steps.tf-plan.outputs.exitcode }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Ensure Terraform Directory Exists
-        run: mkdir -p terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
 
-      - name: Install Terraform
-        run: |
-          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
-          sudo apt-add-repository "deb https://apt.releases.hashicorp.com $(lsb_release -cs) main"
-          sudo apt-get update && sudo apt-get install terraform
-          terraform -version
+    - name: Terraform Init
+      run: terraform init
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+    - name: Terraform Plan
+      id: tf-plan
+      run: |
+        export exitcode=0
+        terraform plan -detailed-exitcode -no-color -out tfplan || export exitcode=$?
+        
+        echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+        
+        if [ $exitcode -eq 1 ]; then
+          echo "Terraform Plan Failed!"
+          exit 1
+        else 
+          exit 0
+        fi
 
-      - name: Initialize Terraform
-        run: terraform init
-        working-directory: terraform
+    - name: Publish Terraform Plan Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan
+        path: terraform/tfplan  # Adjusted path for the plan file
+        
+    - name: Create String Output of Terraform Plan
+      id: tf-plan-string
+      run: |
+        TERRAFORM_PLAN=$(terraform show -no-color tfplan)
+        
+        delimiter="$(openssl rand -hex 8)"
+        echo "summary<<${delimiter}" >> $GITHUB_OUTPUT
+        echo "## Terraform Plan Output" >> $GITHUB_OUTPUT
+        echo "<details><summary>Click to expand</summary>" >> $GITHUB_OUTPUT
+        echo "" >> $GITHUB_OUTPUT
+        echo '```terraform' >> $GITHUB_OUTPUT
+        echo "$TERRAFORM_PLAN" >> $GITHUB_OUTPUT
+        echo '```' >> $GITHUB_OUTPUT
+        echo "</details>" >> $GITHUB_OUTPUT
+        echo "${delimiter}" >> $GITHUB_OUTPUT
 
-      - name: Install Driftctl
-        run: |
-          curl -L https://github.com/snyk/driftctl/releases/latest/download/driftctl_linux_amd64 -o driftctl
-          chmod +x driftctl
-          sudo mv driftctl /usr/local/bin/
+    - name: Publish Terraform Plan to Task Summary
+      env:
+        SUMMARY: ${{ steps.tf-plan-string.outputs.summary }}
+      run: |
+        echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
 
-      - name: Run Drift Detection
-        id: drift
-        run: |
-          driftctl scan --from tfstate+s3://firefly-drift-detection-bucket/terraform.tfstate --to aws+tf --output json > drift_report.json || true
-        working-directory: terraform
+    - name: Publish Drift Report (If Changes Detected)
+      if: steps.tf-plan.outputs.exitcode == 2
+      uses: actions/github-script@v7
+      env:
+        SUMMARY: "${{ steps.tf-plan-string.outputs.summary }}"
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const body = `${process.env.SUMMARY}`;
+          const title = 'Terraform Configuration Drift Detected';
+          const creator = 'github-actions[bot]';
 
-      - name: Upload Drift Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: drift-report
-          path: terraform/drift_report.json
+          const issues = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            creator: creator,
+            title: title
+          });
 
-      - name: Fail on Drift (Pause Before Applying Fixes)
-        if: steps.drift.outcome == 'success'
-        run: |
-          if grep -q '"summary":.*"total_changes":[^0]' terraform/drift_report.json; then
-            echo "⚠️ Drift detected! Stopping execution."
-            exit 1
-          else
-            echo "✅ No drift detected."
-          fi
+          if (issues.data.length > 0) {
+            const issue = issues.data[0];
+            if (issue.body == body) {
+              console.log('Drift Detected: Found matching issue with duplicate content');
+            } else {
+              console.log('Drift Detected: Updating existing issue');
+              github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: body
+              });
+            }
+          } else {
+            console.log('Drift Detected: Creating new issue');
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body
+            });
+          }
 
-      - name: Plan Terraform Changes (If Drift Exists)
-        if: steps.drift.outcome == 'failure'  # Only run if previous step failed
-        run: terraform plan -out=tfplan
-        working-directory: terraform
+    - name: Close Open Drift Issue (If No Changes Detected)
+      if: steps.tf-plan.outputs.exitcode == 0
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const title = 'Terraform Configuration Drift Detected';
+          const creator = 'github-actions[bot]';
 
-      - name: Apply Terraform Changes (Only If Needed)
-        if: steps.drift.outcome == 'failure'  # Only run if drift was detected
-        run: terraform apply -auto-approve tfplan
-        working-directory: terraform
+          const issues = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            creator: creator,
+            title: title
+          });
+
+          if (issues.data.length > 0) {
+            const issue = issues.data[0];
+            github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              state: 'closed'
+            });
+          }
+
+    - name: Fail Workflow If Drift Detected
+      if: steps.tf-plan.outputs.exitcode == 2
+      run: exit 1

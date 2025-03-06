@@ -3,19 +3,12 @@ name: 'Terraform Configuration Drift Detection - AWS'
 on:
   push:
     branches:
-      - main  # Runs the workflow on every push to the main branch
+      - main  
 
-# Permissions required for GitHub OIDC authentication (if used in future)
-permissions:
-  id-token: write
-  contents: read
-  issues: write
-
-# AWS credentials from GitHub secrets
 env:
   AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}"
   AWS_SECRET_ACCESS_KEY: "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
-  AWS_DEFAULT_REGION: "us-east-1"  # Change this to your AWS region
+  AWS_DEFAULT_REGION: "us-east-1" 
 
 jobs:
   terraform-plan:
@@ -23,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: terraform  # Ensuring all Terraform commands execute inside the terraform folder
+        working-directory: terraform  
     outputs:
       tfplanExitCode: ${{ steps.tf-plan.outputs.exitcode }}
 
@@ -58,7 +51,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: tfplan
-        path: terraform/tfplan  # Adjusted path for the plan file
+        path: terraform/tfplan  
         
     - name: Create String Output of Terraform Plan
       id: tf-plan-string

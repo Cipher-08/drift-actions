@@ -1,9 +1,9 @@
 name: 'Terraform Configuration Drift Detection - AWS'
 
 on:
-  workflow_dispatch: 
-  schedule:
-    - cron: '41 3 * * *' # Runs nightly at 3:41 AM
+  push:
+    branches:
+      - main  # Runs the workflow on every push to the main branch
 
 # Permissions required for GitHub OIDC authentication (if used in future)
 permissions:
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: terraform # Ensuring all Terraform commands execute inside the terraform folder
+        working-directory: terraform  # Ensuring all Terraform commands execute inside the terraform folder
     outputs:
       tfplanExitCode: ${{ steps.tf-plan.outputs.exitcode }}
 
